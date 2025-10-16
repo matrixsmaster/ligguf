@@ -519,10 +519,8 @@ void quantize_q80(qtensor &y, const ftensor &x)
 
         y[i].d = fp32_to_fp16(d);
 
-        for (int j = 0; j < QK8_0; ++j) {
-            const float x0 = x[i*QK8_0 + j]*id;
-            y[i].qs[j] = roundf(x0);
-        }
+        for (int j = 0; j < QK8_0; ++j)
+            y[i].qs[j] = roundf(x[i * QK8_0 + j] * id);
     }
 }
 
@@ -622,9 +620,7 @@ void softmax(float* x, int size)
     // find max value (for numerical stability)
     float max_val = x[0];
     for (int i = 1; i < size; i++) {
-        if (x[i] > max_val) {
-            max_val = x[i];
-        }
+        if (x[i] > max_val) max_val = x[i];
     }
     // exp and sum
     float sum = 0.0f;
@@ -633,9 +629,7 @@ void softmax(float* x, int size)
         sum += x[i];
     }
     // normalize
-    for (int i = 0; i < size; i++) {
-        x[i] /= sum;
-    }
+    for (int i = 0; i < size; i++) x[i] /= sum;
 }
 
 ftensor inference(int tok, int pos)
@@ -732,10 +726,10 @@ ftensor inference(int tok, int pos)
         matmul_wrap(g_m.hb,g_m.xq.data(),g_m.n_embed,g_m.n_ff,LAYER_FFN_UP_KEY,l); // up
         matmul_wrap(g_m.hb2,g_m.xq.data(),g_m.n_embed,g_m.n_ff,LAYER_FFN_GATE_KEY,l); // gate
 
-        // apply SwiGLU correctly: silu(gate) * up
+        // Apply SwiGLU: silu(gate) * up
         for (int i = 0; i < g_m.n_ff; ++i) {
-            float g = g_m.hb2[i];
-            float silu_g = g / (1.0f + expf(-g));
+            const float g = g_m.hb2[i];
+            const float silu_g = g / (1.0f + expf(-g));
             g_m.hb[i] = silu_g * g_m.hb[i];
         }
 
