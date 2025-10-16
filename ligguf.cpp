@@ -140,6 +140,8 @@ void close_mmap()
 
 bool open_mmap(const char* fn)
 {
+    g_m.fsize = 0;
+    g_m.base = NULL;
     g_m.file = open(fn,O_RDONLY);
     if (g_m.file == -1) {
         ERR("Can't open file %s",fn);
@@ -430,25 +432,22 @@ vector<int> tokenize(const char* str, bool bos, bool eos)
     return out;
 }
 
-static inline float fp32_from_bits(uint32_t w) {
-    union {
-        uint32_t as_bits;
-        float as_value;
-    } fp32;
-    fp32.as_bits = w;
-    return fp32.as_value;
+static inline float fp32_from_bits(uint32_t w)
+{
+    float r;
+    memcpy(&r,&w,4);
+    return r;
 }
 
-static inline uint32_t fp32_to_bits(float f) {
-    union {
-        float as_value;
-        uint32_t as_bits;
-    } fp32;
-    fp32.as_value = f;
-    return fp32.as_bits;
+static inline uint32_t fp32_to_bits(float f)
+{
+    uint32_t r;
+    memcpy(&r,&f,4);
+    return r;
 }
 
-static inline float fp16_to_fp32(uint16_t h) {
+static inline float fp16_to_fp32(uint16_t h) // from llama.cpp
+{
     const uint32_t w = (uint32_t) h << 16;
     const uint32_t sign = w & UINT32_C(0x80000000);
     const uint32_t two_w = w + w;
@@ -467,7 +466,8 @@ static inline float fp16_to_fp32(uint16_t h) {
     return fp32_from_bits(result);
 }
 
-static inline uint16_t fp32_to_fp16(float f) {
+static inline uint16_t fp32_to_fp16(float f) // from llama.cpp
+{
     const float scale_to_inf = fp32_from_bits(UINT32_C(0x77800000));
     const float scale_to_zero = fp32_from_bits(UINT32_C(0x08800000));
 
@@ -521,7 +521,6 @@ void quantize_q80(qtensor &y, const ftensor &x)
 
         for (int j = 0; j < QK8_0; ++j) {
             const float x0 = x[i*QK8_0 + j]*id;
-
             y[i].qs[j] = roundf(x0);
         }
     }
