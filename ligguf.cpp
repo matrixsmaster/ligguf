@@ -114,10 +114,10 @@ struct model_state {
 
     ftensor x; // activation at current time stamp
     qtensor xq; // quantized x
-    ftensor xb; // same, but inside a residual branch
-    ftensor xb2; // buffer for raw attention result
-    ftensor hb; // buffer for hidden dimension in the ffn
-    ftensor hb2; // buffer for hidden dimension in the ffn
+    ftensor xb; // activation inside a residual branch
+    ftensor xb2; // raw attention result
+    ftensor hb; // ffn up result
+    ftensor hb2; // ffn gate result
     ftensor q,k,v; // current QKV
     ftensor kc,vc; // KV cache
     ftensor att; // attention scores
@@ -166,45 +166,20 @@ bool open_mmap(const char* fn)
     return true;
 }
 
-uint8_t inline rd8(uint8_t** pos)
-{
-    uint8_t r = 0;
-    memcpy(&r,*pos,1);
-    *pos += 1;
-    return r;
+// unified reading from memory
+#define RDMEM(T,N) T inline N (uint8_t** pos)\
+{\
+    T r = 0;\
+    memcpy(&r,*pos,sizeof(T));\
+    *pos += sizeof(T);\
+    return r;\
 }
 
-uint16_t inline rd16(uint8_t** pos)
-{
-    uint16_t r = 0;
-    memcpy(&r,*pos,2);
-    *pos += 2;
-    return r;
-}
-
-uint32_t inline rd32(uint8_t** pos)
-{
-    uint32_t r = 0;
-    memcpy(&r,*pos,4);
-    *pos += 4;
-    return r;
-}
-
-uint64_t inline rd64(uint8_t** pos)
-{
-    uint64_t r = 0;
-    memcpy(&r,*pos,8);
-    *pos += 8;
-    return r;
-}
-
-float inline rdf32(uint8_t** pos)
-{
-    float r = 0;
-    memcpy(&r,*pos,4);
-    *pos += 4;
-    return r;
-}
+RDMEM(uint8_t,rd8)
+RDMEM(uint16_t,rd16)
+RDMEM(uint32_t,rd32)
+RDMEM(uint64_t,rd64)
+RDMEM(float,rdf32)
 
 string rdstr(uint8_t** pos)
 {
@@ -787,10 +762,10 @@ void generate(vector<int> prompt, int ntokens)
 
         if (!tok || tok == g_m.tok_eos) break;
 
-        logits = inference(tok,i);
         puttok(tok);
+        if (i == ntokens-1) break; // no need to run inference anymore
+        logits = inference(tok,i);
     }
-    puttok(tok);
 }
 
 vector<int> read_tokens(int argc, char* argv[], int first)

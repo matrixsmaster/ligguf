@@ -13,13 +13,13 @@ Yes, it really works.
 Ligguf is a fully self-contained C++ program that loads and runs quantized LLaMA-family **GGUF** models *directly from disk*.
 It is a stand-alone, minimal, end-to-end implementation — the whole model pipeline in under a thousand lines.
 
-Think of it as *LLaMA, unwrapped.*
+Think of it as *LLaMA, simple & unwrapped.*
 
 ---
 
 ## Highlights
 
-- **Tiny:** under **830 lines**, including comments.
+- **Tiny:** under **800 lines**, including comments.
 - **No dependencies:** standard library only.
 - **Direct GGUF parsing:** opens `.gguf` files directly via mmap — no conversions, no preprocessing.
 - **Quantized:** supports **Q8_0** out of the box (same layout as llama.cpp).
@@ -48,7 +48,7 @@ You have two options, depending on your level of courage:
    g++ -O3 ligguf.cpp -o ligguf
    ```
 
-2. **For for those who don't dare touching bare g++ without safety gloves:**
+2. **For those who don't dare touching bare g++ without safety gloves:**
    ```
    make
    ```
@@ -64,7 +64,7 @@ Use only if you enjoy scrolling through thousands of lines of floating-point enl
 
 ## Running it
 
-Grab any LLaMA-style **Q8_0 GGUF** model (for example from Hugging Face), then:
+Grab any LLaMA-style **Q8_0** GGUF model (for example from Hugging Face), then:
 
 ```
 ./ligguf model.gguf "Hello"
@@ -112,7 +112,7 @@ Everything else is left as an exercise for the inspired.
 > “Simplicity isn’t lack of complexity — it’s control over it.”
 
 Ligguf exists to be read, understood, and tinkered with.
-It’s the codebase you can open in a text editor (or print on a single A4 sheet), scroll through, and actually *get it*.
+It’s the codebase you can open in a text editor (or print on a single A4 sheet), read through, and actually *get it*.
 Every number has a reason. Every line has a purpose.
 
 ---
