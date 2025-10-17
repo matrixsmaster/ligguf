@@ -211,7 +211,7 @@ float inline kvrdf32(string key)
 
 uint64_t skipper(gguf_val_type t, uint8_t* pos)
 {
-    switch(t){
+    switch (t) {
         case GUINT8:
         case GINT8:
         case GBOOL:
@@ -278,15 +278,12 @@ bool read_gguf()
 
         kv.tag = (gguf_val_type)rd32(&p);
         kv.off = p - g_m.base;
-
-        string val;
-        if (kv.tag == GSTRING) val = rdstr(&p);
-        else p += skipper(kv.tag,p);
-
         g_m.meta_kv[key] = kv;
+
+        p += skipper(kv.tag,p);
     }
 
-    for (uint64_t i=0; i < nten; i++) {
+    for (uint64_t i = 0; i < nten; i++) {
         string key = rdstr(&p);
         uint32_t ndim = rd32(&p);
 
@@ -471,7 +468,7 @@ void dequant_q80(ftensor &y, block_q8_0* ptr, uint64_t nrow, int len)
     for (int i = 0; i < nb; i++) {
         const float d = fp16_to_fp32(x[i].d);
 
-        for (int j = 0; j < QK8_0; ++j)
+        for (int j = 0; j < QK8_0; j++)
             y[i*QK8_0 + j] = x[i].qs[j]*d;
     }
 }
@@ -494,7 +491,7 @@ void quantize_q80(qtensor &y, const ftensor &x)
 
         y[i].d = fp32_to_fp16(d);
 
-        for (int j = 0; j < QK8_0; ++j)
+        for (int j = 0; j < QK8_0; j++)
             y[i].qs[j] = roundf(x[i * QK8_0 + j] * id);
     }
 }
@@ -592,7 +589,7 @@ void rope(ftensor& x, int n_heads, int pos)
 
 void softmax(float* x, int size)
 {
-    // find max value (for numerical stability)
+    // find max value
     float max_val = x[0];
     for (int i = 1; i < size; i++) {
         if (x[i] > max_val) max_val = x[i];
@@ -691,7 +688,7 @@ ftensor inference(int tok, int pos)
         matmul_wrap(g_m.xb2,g_m.xq.data(),g_m.n_embed,g_m.n_embed,LAYER_ATT_OUT_KEY,l);
 
         // residual connection back to x
-        for (int j = 0; j < g_m.n_embed; ++j) g_m.x[j] += g_m.xb2[j];
+        for (int j = 0; j < g_m.n_embed; j++) g_m.x[j] += g_m.xb2[j];
 
         // 6. Feed-Forward Network
         rmsnorm(g_m.xb,g_m.x,LAYER_FFN_NORM_KEY,l); // FFN RMS norm
@@ -702,7 +699,7 @@ ftensor inference(int tok, int pos)
         matmul_wrap(g_m.hb2,g_m.xq.data(),g_m.n_embed,g_m.n_ff,LAYER_FFN_GATE_KEY,l); // gate
 
         // Apply SwiGLU: silu(gate) * up
-        for (int i = 0; i < g_m.n_ff; ++i) {
+        for (int i = 0; i < g_m.n_ff; i++) {
             const float g = g_m.hb2[i];
             const float silu_g = g / (1.0f + expf(-g));
             g_m.hb[i] = silu_g * g_m.hb[i];
@@ -713,7 +710,7 @@ ftensor inference(int tok, int pos)
         matmul_wrap(g_m.xb,g_m.xq.data(),g_m.n_ff,g_m.n_embed,LAYER_FFN_DOWN_KEY,l); // w2
 
         // Residual back to x
-        for (int j = 0; j < g_m.n_embed; ++j) g_m.x[j] += g_m.xb[j];
+        for (int j = 0; j < g_m.n_embed; j++) g_m.x[j] += g_m.xb[j];
     }
 
     // final RMS norm
@@ -732,7 +729,7 @@ int sampler(const ftensor &logits)
 
     int best_id = 0;
     float best_v = logits[0];
-    for (int i = 1; i < (int)logits.size(); ++i) {
+    for (int i = 1; i < (int)logits.size(); i++) {
         if (logits[i] > best_v) {
             best_v = logits[i];
             best_id = i;
