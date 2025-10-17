@@ -11,9 +11,7 @@ Yes, it really works.
 ## What it is
 
 Ligguf is a fully self-contained C++ program that loads and runs quantized LLaMA-family **GGUF** models *directly from disk*.
-It is a stand-alone, minimal, end-to-end implementation — the whole model pipeline in under a thousand lines.
-
-Think of it as *LLaMA, simple & unwrapped.*
+It is a stand-alone, minimal, end-to-end implementation — the whole model pipeline in under 800 lines.
 
 ---
 
@@ -44,14 +42,14 @@ You need about 800 lines of C++ and an unhealthy amount of curiosity.
 You have two options, depending on your level of courage:
 
 1. **For the fearless:**
-   ```
-   g++ -O3 ligguf.cpp -o ligguf
-   ```
+```
+g++ -O3 ligguf.cpp -o ligguf
+```
 
 2. **For those who don't dare touching bare g++ without safety gloves:**
-   ```
-   make
-   ```
+```
+make
+```
 
 The `Makefile` also includes a **debug** target:
 ```
