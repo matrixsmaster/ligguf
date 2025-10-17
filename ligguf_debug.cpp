@@ -899,10 +899,26 @@ int main(int argc, char* argv[])
         else
             toks = read_tokens(argc,argv,3);
 
-        generate(toks,toks.size()+12);
+        generate(toks,toks.size()+1);
     }
 
-    puts("Done.");
+#if 1
+    puts("");
+    DBG("Size of x = %zu",g_m.x.size());
+    DBG("Size of xb = %zu",g_m.xb.size());
+    DBG("Size of xb2 = %zu",g_m.xb2.size());
+    DBG("Size of xq = %zu",g_m.xq.size());
+    DBG("Size of hb = %zu",g_m.hb.size());
+    DBG("Size of hb2 = %zu",g_m.hb2.size());
+    DBG("Size of q = %zu",g_m.q.size());
+    DBG("Size of k = %zu",g_m.k.size());
+    DBG("Size of v = %zu",g_m.v.size());
+    DBG("Size of kc = %zu",g_m.kc.size());
+    DBG("Size of vc = %zu",g_m.vc.size());
+    DBG("Size of att = %zu",g_m.att.size());
+#endif
+
+    puts("\nDone.");
     close_mmap();
     return 0;
 }
