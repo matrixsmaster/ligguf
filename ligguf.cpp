@@ -537,7 +537,7 @@ void inline matmul(ftensor &out, block_q8_0* qx, block_q8_0* qw, int n, int d)
                 s += (int32_t)(qx[b].qs[i]) * (int32_t)(qw[iw].qs[i]);
 
             // scale and accumulate result as float
-            acc += sw * sx * (double)s;
+            acc += sw * sx * (float)s;
         }
 
         out[r] = (float)acc;
