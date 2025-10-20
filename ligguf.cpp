@@ -742,7 +742,7 @@ int sampler(const ftensor &logits)
 void puttok(int tok)
 {
     if (tok < 0 || tok >= g_m.vocab_size) printf(" <Error token %d> ",tok);
-    printf("%s",g_m.tokens[tok].c_str());
+    else printf("%s",g_m.tokens[tok].c_str());
     fflush(stdout);
 }
 
