@@ -774,22 +774,27 @@ vector<int> read_tokens(int argc, char* argv[], int first)
 
 int main(int argc, char* argv[])
 {
-    assert(argc > 1);
+    puts("Welcome to LiGGUF!");
+    if (argc < 4) {
+        printf("Usage: %s <model.gguf> <number_of_tokens_to_generate> <prompt>\n",argv[0]);
+        printf("  or   %s <model.gguf> <number_of_tokens_to_generate> \"tokens\" [ token0, token1, ... ]\n",argv[0]);
+        return 0;
+    }
+
     assert(open_mmap(argv[1]));
     assert(read_gguf());
     assert(read_tokenizer());
 
-    if (argc > 2) {
-        vector<int> toks;
-        if (strcmp(argv[2],"tokens"))
-            toks = tokenize(argv[2],true,false);
-        else
-            toks = read_tokens(argc,argv,3);
+    int ngen = atoi(argv[2]);
+    vector<int> toks;
+    if (strcmp(argv[3],"tokens"))
+        toks = tokenize(argv[3],true,false);
+    else
+        toks = read_tokens(argc,argv,4);
 
-        generate(toks,toks.size()+12);
-    }
+    generate(toks,toks.size() + ngen);
 
-    puts("Done.");
     close_mmap();
+    puts("\nDone.");
     return 0;
 }

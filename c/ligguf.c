@@ -35,7 +35,7 @@
 #define MAX(A,B) (((A) > (B))? (A) : (B))
 
 #define ERR(S,...) fprintf(stderr,S "\n", __VA_ARGS__)
-#if 1
+#if 0
     #define DBG(S,...) printf(S "\n",__VA_ARGS__)
 #else
     #define DBG(...)
@@ -58,9 +58,9 @@ typedef block_q8_0* qtensor;
 typedef float* ftensor;
 
 typedef struct {
-    ftensor att_norm, ffn_norm;
-    qtensor att_q, att_k, att_v, att_out;
-    qtensor ffn_up, ffn_down, ffn_gate;
+    ftensor att_norm, ffn_norm; // RMS norm weights for attention and FFN
+    qtensor att_q, att_k, att_v, att_out; // attention QKV + output weights
+    qtensor ffn_up, ffn_down, ffn_gate; // FFN weights
 } trans_block;
 
 typedef struct {
@@ -86,10 +86,10 @@ typedef struct {
 
     char** tokens; // vector of known tokens (pos == index)
     ftensor tokscores; // token scores (const)
-    qtensor t_embed;
-    qtensor t_out;
-    ftensor t_outnorm;
-    trans_block* tr;
+    qtensor t_embed; // embedding tensor (const)
+    qtensor t_out; // output classifier weights (const)
+    ftensor t_outnorm; // output classifier RMS norm weights (const)
+    trans_block* tr; // transformer blocks/layers (const)
 
     ftensor x; // activation at current time stamp
     qtensor xq; // quantized x
@@ -390,43 +390,22 @@ int* tokenize(const char* str, int bos, int eos)
 
 static inline float fp16_to_fp32(uint16_t h)
 {
-    const uint32_t w = ((uint32_t)h) << 16;
-    const uint32_t sign = w & 0x80000000;
-    const uint32_t two_w = w << 1;
-
-    const uint32_t exp_offset = 0xE0U << 23;
-    const float exp_scale = fp32_from_bits(0x7800000);
-
-    const float normalized_value = fp32_from_bits((two_w >> 4) + exp_offset) * exp_scale;
-
-    const uint32_t magic_mask = 126U << 23;
-    const float magic_bias = 0.5f;
-    const float denormalized_value = fp32_from_bits((two_w >> 17) | magic_mask) - magic_bias;
-
-    const uint32_t denormalized_cutoff = 1U << 27;
-    const uint32_t result = sign | (two_w < denormalized_cutoff ? fp32_to_bits(denormalized_value) : fp32_to_bits(normalized_value));
+    uint32_t w = ((uint32_t)h) << 16;
+    uint32_t d = w << 1;
+    uint32_t result = (w & (1 << 30)) | (d < (1 << 27) ? fp32_to_bits(fp32_from_bits((d >> 17) | (126 << 23)) - .5f) : fp32_to_bits(fp32_from_bits((d >> 4) + (224 << 23)) * fp32_from_bits(120 << 20)));
     return fp32_from_bits(result);
 }
 
 static inline uint16_t fp32_to_fp16(float f)
 {
-    const float scale_to_inf = fp32_from_bits(0x77800000);
-    const float scale_to_zero = fp32_from_bits(0x08800000);
-
-    float base = (fabsf(f) * scale_to_inf) * scale_to_zero;
-
-    const uint32_t w = fp32_to_bits(f);
-    const uint32_t shl1_w = w << 1;
-    const uint32_t sign = w & 0x80000000;
-    uint32_t bias = shl1_w & 0xFF000000;
-    if (bias < 0x71000000) bias = 0x71000000;
-
-    base += fp32_from_bits((bias >> 1) + 0x07800000);
-    const uint32_t bits = fp32_to_bits(base);
-    const uint32_t exp_bits = (bits >> 13) & 0x00007C00;
-    const uint32_t mantissa_bits = bits & 0x00000FFF;
-    const uint32_t nonsign = exp_bits + mantissa_bits;
-    return (sign >> 16) | ((shl1_w > 0xFF000000) ? (uint16_t)0x7E00 : nonsign);
+    float b = (fabs(f) * fp32_from_bits(0x778 << 20)) * fp32_from_bits(136 << 20);
+    uint32_t w = fp32_to_bits(f);
+    uint32_t d = w << 1;
+    uint32_t s = d & (255 << 24);
+    if (s < (113 << 24)) s = (113 << 24);
+    b += fp32_from_bits((s >> 1) + (120 << 20));
+    uint32_t bits = fp32_to_bits(b);
+    return ((w & (1 << 31)) >> 16) | ((d > (255 << 24)) ? (uint16_t)(126 << 8) : ((bits >> 13) & (124 << 8)) + (bits & 4095));
 }
 
 void dequant_q80(ftensor y, block_q8_0* ptr, uint64_t nrow, int len)
@@ -690,19 +669,22 @@ void generate(int* prompt, int ntokens)
 
 int main(int argc, char* argv[])
 {
-    assert(argc > 1);
+    puts("Welcome to LiGGUF C edition!");
+    if (argc < 4) {
+        printf("Usage: %s <model.gguf> <number_of_tokens_to_generate> <prompt>\n",argv[0]);
+        return 0;
+    }
+
     open_mmap(argv[1]);
     read_gguf();
     read_tokenizer();
 
-    if (argc > 3) {
-        int ngen = atoi(argv[2]);
-        int* toks = tokenize(argv[3],1,0);
-        int ntok = 0;
-        for (int i = 0; toks[i]; i++,ntok++) ;
-        generate(toks,ntok+ngen);
-        if (toks) free(toks);
-    }
+    int ngen = atoi(argv[2]);
+    int* toks = tokenize(argv[3],1,0);
+    int ntok = 0;
+    for (int i = 0; toks[i]; i++,ntok++) ;
+    generate(toks,ntok+ngen);
+    if (toks) free(toks);
 
     puts("\nDone.");
     return 0;
