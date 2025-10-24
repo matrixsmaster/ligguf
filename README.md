@@ -2,7 +2,10 @@
 
 **Ligguf** is (probably) the first **tiny, dependency-free LLaMA inference engine** with **direct GGUF support** —
 no conversions, no helper scripts, no Python detours.
-Just one file, one compiler, and a model from Hugging Face.
+
+It's also unique in that it exists in two flavors simultaneously - in pure C, and in C++ versions.
+
+Just one file, one compiler of your choice, and a model straight from Hugging Face.
 
 Yes, it really works.
 
@@ -10,14 +13,19 @@ Yes, it really works.
 
 ## What it is
 
-Ligguf is a fully self-contained C++ program that loads and runs quantized LLaMA-family **GGUF** models *directly from disk*.
-It is a stand-alone, minimal, end-to-end implementation — the whole model pipeline in under 800 lines.
+Ligguf is a fully self-contained program that loads and runs quantized LLaMA-family **GGUF** models *directly from disk*.
+It is a stand-alone, minimal, end-to-end implementation — the whole model pipeline in under 800 (C++ version) or 700 (C version) lines.
+
+Now available in **two flavors**:
+
+- a clear and educational **C++ edition**, and
+- an even smaller **pure C version** — under **700 lines** of code.
 
 ---
 
 ## Highlights
 
-- **Tiny:** under **800 lines**, including comments.
+- **Tiny:** under **800** (C++ version) or **700** (C version) lines, including comments.
 - **No dependencies:** standard library only.
 - **Direct GGUF parsing:** opens `.gguf` files directly via mmap — no conversions, no preprocessing.
 - **Quantized:** supports **Q8_0** out of the box (same layout as llama.cpp).
@@ -33,7 +41,11 @@ Because “small and clear” is still the best way to understand “big and com
 
 Ligguf started as a debugging experiment and evolved into a statement:
 you don’t need ten repositories and a build farm to understand how a LLaMA thinks.
-You need about 800 lines of C++ and an unhealthy amount of curiosity.
+You need only about 700 lines of C (or 800 lines of C++).
+
+**It can also be embedded!** You can run it on pretty much anything, bare-metal, provided that your target board has enough RAM ;)
+
+For 7B model (32 layers) and 4K context window, you'll need only 512.34 GiB. This is within reach for many contemporary devkits.
 
 ---
 
@@ -43,13 +55,16 @@ You have two options, depending on your level of courage:
 
 1. **For the fearless:**
 ```
-g++ -O3 ligguf.cpp -o ligguf
+g++ -O3 cpp/ligguf.cpp -o ligguf-cpp
+gcc -O3 c/ligguf.c -o ligguf-c
 ```
 
-2. **For those who don't dare touching bare g++ without safety gloves:**
+2. **For those who don't dare touching bare gcc without safety gloves:**
 ```
 make
 ```
+
+_(This will build both C++ and C versions)_
 
 The `Makefile` also includes a **debug** target:
 ```
@@ -65,13 +80,13 @@ Use only if you enjoy scrolling through thousands of lines of floating-point enl
 Grab any LLaMA-style **Q8_0** GGUF model (for example from Hugging Face), then:
 
 ```
-./ligguf model.gguf "Hello"
+./ligguf model.gguf 64 "Hello"
 ```
 
 or, if you want to feed raw token IDs:
 
 ```
-./ligguf model.gguf tokens 1 15043 29871
+./ligguf model.gguf 32 tokens 1 15043 29871
 ```
 
 Ligguf will tokenize, run inference, and print tokens directly.
@@ -86,7 +101,7 @@ It doesn’t stream or batch — it just works, one token at a time.
 - FP16/FP32 conversion
 - Q8_0 quantization and dequantization
 - RMSNorm
-- RoPE (rotary position embedding)
+- RoPE
 - Multi-head attention with **GQA**
 - Simple per-layer **KV cache**
 - **SwiGLU** feed-forward network
