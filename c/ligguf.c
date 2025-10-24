@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #define ALIGNMENT 32
 #define MAXNAMELEN 1024
@@ -34,11 +35,18 @@
 #define MIN(A,B) (((A) < (B))? (A) : (B))
 #define MAX(A,B) (((A) > (B))? (A) : (B))
 
+#define MULTITHREAD _Pragma("omp parallel for")
+
 #define ERR(S,...) fprintf(stderr,S "\n", __VA_ARGS__)
-#if 0
+
+#ifdef DEBUG
     #define DBG(S,...) printf(S "\n",__VA_ARGS__)
+    #define TIMING_START struct timespec _ts,_te; clock_gettime(CLOCK_MONOTONIC,&_ts)
+    #define TIMING_STOP(X) clock_gettime(CLOCK_MONOTONIC,&_te); DBG("Time passed for " X ": %lu ms",(_te.tv_sec-_ts.tv_sec)*1000+((_te.tv_nsec-_ts.tv_nsec)/1000000))
 #else
     #define DBG(...)
+    #define TIMING_START
+    #define TIMING_STOP(...)
 #endif
 
 typedef enum { F32, F16, Q8_0 = 8 } gguf_type;
@@ -103,6 +111,7 @@ typedef struct {
 } model_state;
 
 model_state g_m;
+float fp1632_lut[65536];
 
 // unified reading from memory
 #define RDMEM(T,N) static inline T N (uint8_t** pos)\
@@ -208,7 +217,9 @@ void read_gguf()
 
         p += skipper(tag,p);
         uint8_t* dp = g_m.base + off;
-        uint8_t* ddp = dp; // debug only
+#ifdef DEBUG
+        uint8_t* ddp = dp;
+#endif
 
         if (!strcmp(key,VOCAB_SIZE_KEY)) g_m.vocab_size = rd32(&dp);
         else if (!strcmp(key,BLOCK_COUNT_KEY)) g_m.n_layers = rd32(&dp);
@@ -268,8 +279,12 @@ void read_gguf()
     for (uint64_t i = 0; i < nten; i++) {
         key = rdstra(&p);
         uint32_t ndim = rd32(&p);
+#ifdef DEBUG
         p += 8 * ndim;
         uint32_t type = rd32(&p);
+#else
+        p += 8 * ndim + 4;
+#endif
         uint64_t off = rd64(&p);
         uint8_t* ptr = g_m.tensors_off + off;
         DBG("Tensor '%s', type %u, offset %lu",key,type,off);
@@ -392,20 +407,20 @@ static inline float fp16_to_fp32(uint16_t h)
 {
     uint32_t w = ((uint32_t)h) << 16;
     uint32_t d = w << 1;
-    uint32_t result = (w & (1 << 30)) | (d < (1 << 27) ? fp32_to_bits(fp32_from_bits((d >> 17) | (126 << 23)) - .5f) : fp32_to_bits(fp32_from_bits((d >> 4) + (224 << 23)) * fp32_from_bits(120 << 20)));
+    uint32_t result = (w & (1U << 30)) | (d < (1U << 27) ? fp32_to_bits(fp32_from_bits((d >> 17) | (126U << 23)) - .5f) : fp32_to_bits(fp32_from_bits((d >> 4) + (224U << 23)) * fp32_from_bits(120U << 20)));
     return fp32_from_bits(result);
 }
 
 static inline uint16_t fp32_to_fp16(float f)
 {
-    float b = (fabs(f) * fp32_from_bits(0x778 << 20)) * fp32_from_bits(136 << 20);
+    float b = (fabs(f) * fp32_from_bits(0x778U << 20)) * fp32_from_bits(136U << 20);
     uint32_t w = fp32_to_bits(f);
     uint32_t d = w << 1;
-    uint32_t s = d & (255 << 24);
-    if (s < (113 << 24)) s = (113 << 24);
-    b += fp32_from_bits((s >> 1) + (120 << 20));
+    uint32_t s = d & (255U << 24);
+    if (s < (113U << 24)) s = (113U << 24);
+    b += fp32_from_bits((s >> 1) + (120U << 20));
     uint32_t bits = fp32_to_bits(b);
-    return ((w & (1 << 31)) >> 16) | ((d > (255 << 24)) ? (uint16_t)(126 << 8) : ((bits >> 13) & (124 << 8)) + (bits & 4095));
+    return ((w & (1U << 31)) >> 16) | ((d > (255U << 24)) ? (uint16_t)(126U << 8) : ((bits >> 13) & (124U << 8)) + (bits & 4095U));
 }
 
 void dequant_q80(ftensor y, block_q8_0* ptr, uint64_t nrow, int len)
@@ -413,6 +428,7 @@ void dequant_q80(ftensor y, block_q8_0* ptr, uint64_t nrow, int len)
     block_q8_0* x = ptr + nrow * (len / QK8_0);
     const int nb = len / QK8_0;
 
+    MULTITHREAD
     for (int i = 0; i < nb; i++) {
         const float d = fp16_to_fp32(x[i].d);
 
@@ -424,6 +440,8 @@ void dequant_q80(ftensor y, block_q8_0* ptr, uint64_t nrow, int len)
 void quantize_q80(qtensor y, ftensor x, int xsize)
 {
     const int nb = xsize / QK8_0;
+
+    MULTITHREAD
     for (int i = 0; i < nb; i++) {
         float amax = 0.0f; // absolute max
 
@@ -450,21 +468,21 @@ void rmsnorm(ftensor out, ftensor x, ftensor w, int size)
     ss = ss / (float)size + g_m.rms_epsilon;
     ss = 1.0f / sqrtf(ss);
 
-    for (int i = 0; i < size; i++,w++)
-        out[i] = x[i] * ss * (*w);
+    MULTITHREAD
+    for (int i = 0; i < size; i++)
+        out[i] = x[i] * ss * w[i];
 }
 
 void matmul(ftensor out, qtensor qx, qtensor qw, int n, int d)
 {
     const int nb = n / QK8_0;
 
+    MULTITHREAD
     for (int r = 0; r < d; r++) { // each row
         float acc = 0.0;
 
         for (int b = 0; b < nb; b++) { // each block
             int iw = r * nb + b;
-            const float sx = fp16_to_fp32(qx[b].d);
-            const float sw = fp16_to_fp32(qw[iw].d);
 
             // integer dot
             int32_t s = 0;
@@ -472,10 +490,10 @@ void matmul(ftensor out, qtensor qx, qtensor qw, int n, int d)
                 s += (int32_t)(qx[b].qs[i]) * (int32_t)(qw[iw].qs[i]);
 
             // scale and accumulate result as float
-            acc += sw * sx * (float)s;
+            acc += fp1632_lut[qx[b].d] * fp1632_lut[qw[iw].d] * (float)s;
         }
 
-        out[r] = (float)acc;
+        out[r] = acc;
     }
 }
 
@@ -485,7 +503,8 @@ void rope(ftensor x, int n_heads, int pos)
     if (rd > g_m.head_dim) rd = g_m.head_dim;
     if (rd & 1) rd--; // ensure even
 
-    for (int h = 0; h < n_heads; h++) {
+    MULTITHREAD
+    for (int h = 0; h < n_heads; h++) { // for each head
         float* v = x + h * g_m.head_dim;
 
         for (int i = 0; i < rd; i += 2) {
@@ -508,18 +527,21 @@ void rope(ftensor x, int n_heads, int pos)
 
 void softmax(float* x, int size)
 {
-    // find max value (for numerical stability)
+    // find max value
     float max_val = x[0];
     for (int i = 1; i < size; i++) {
         if (x[i] > max_val) max_val = x[i];
     }
+
     // exp and sum
     float sum = 0.0f;
     for (int i = 0; i < size; i++) {
         x[i] = expf(x[i] - max_val);
         sum += x[i];
     }
+
     // normalize
+    MULTITHREAD
     for (int i = 0; i < size; i++) x[i] /= sum;
 }
 
@@ -663,7 +685,9 @@ void generate(int* prompt, int ntokens)
 
         puttok(tok);
         if (i == ntokens-1) break; // no need to run inference anymore
+        TIMING_START;
         logits = inference(tok,i);
+        TIMING_STOP("inference");
     }
 }
 
@@ -678,6 +702,8 @@ int main(int argc, char* argv[])
     open_mmap(argv[1]);
     read_gguf();
     read_tokenizer();
+
+    for (int i = 0; i < 65536; i++) fp1632_lut[i] = fp16_to_fp32((uint16_t)i);
 
     int ngen = atoi(argv[2]);
     int* toks = tokenize(argv[3],1,0);

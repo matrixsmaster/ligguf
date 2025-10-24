@@ -9,17 +9,21 @@ Just one file, one compiler of your choice, and a model straight from Hugging Fa
 
 Yes, it really works.
 
+**Note:** the C version is now defined as first-class citizen, and will get more updates and care compared to C++ version.
+Even though C++ version has started it all, it might start lagging behind the much faster and leanier C version.
+However, if you want an easy-to-read code, start with C++ version anyway ;)
+
 ---
 
 ## What it is
 
 Ligguf is a fully self-contained program that loads and runs quantized LLaMA-family **GGUF** models *directly from disk*.
-It is a stand-alone, minimal, end-to-end implementation — the whole model pipeline in under 800 (C++ version) or 700 (C version) lines.
+It is a stand-alone, minimal, end-to-end implementation — the whole model pipeline in under 800 (C++ version) or 720 (C version) lines.
 
 Now available in **two flavors**:
 
 - a clear and educational **C++ edition**, and
-- an even smaller **pure C version** — under **700 lines** of code.
+- an even smaller and much faster **pure C version**.
 
 ---
 
@@ -51,26 +55,21 @@ For 7B model (32 layers) and 4K context window, you'll need only 512.34 GiB. Thi
 
 ## Building it
 
-You have two options, depending on your level of courage:
+Can't be simpler:
 
-1. **For the fearless:**
-```
-g++ -O3 cpp/ligguf.cpp -o ligguf-cpp
-gcc -O3 c/ligguf.c -o ligguf-c
-```
-
-2. **For those who don't dare touching bare gcc without safety gloves:**
 ```
 make
 ```
 
-_(This will build both C++ and C versions)_
+**Note 1:** _This will build both C++ and C versions_
+
+**Note 2:** _C version now requires OpenMP to be installed_
 
 The `Makefile` also includes a **debug** target:
 ```
 make debug
 ```
-which builds `ligguf_debug` — the version that prints *everything*.
+which builds debug versions.
 Use only if you enjoy scrolling through thousands of lines of floating-point enlightenment.
 
 ---
@@ -80,17 +79,16 @@ Use only if you enjoy scrolling through thousands of lines of floating-point enl
 Grab any LLaMA-style **Q8_0** GGUF model (for example from Hugging Face), then:
 
 ```
-./ligguf model.gguf 64 "Hello"
+./ligguf-c model.gguf 64 "Hello"
 ```
 
 or, if you want to feed raw token IDs:
 
 ```
-./ligguf model.gguf 32 tokens 1 15043 29871
+./ligguf-cpp model.gguf 32 tokens 1 15043 29871
 ```
 
 Ligguf will tokenize, run inference, and print tokens directly.
-It doesn’t stream or batch — it just works, one token at a time.
 
 ---
 
@@ -106,6 +104,7 @@ It doesn’t stream or batch — it just works, one token at a time.
 - Simple per-layer **KV cache**
 - **SwiGLU** feed-forward network
 - Greedy sampler
+- Multithreading
 
 Everything else is left as an exercise for the inspired.
 
@@ -113,8 +112,6 @@ Everything else is left as an exercise for the inspired.
 
 ## Not (yet) included
 
-- Speed
-- Multithreading
 - Temperature or top-k sampling
 - Sanity
 
@@ -138,4 +135,4 @@ Thanks to **llama.cpp** and **llama2.c** projects for inspiration (and data type
 
 ## License
 
-License? Do you need it? Fine! MIT then :)
+MIT

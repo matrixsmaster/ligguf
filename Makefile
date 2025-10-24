@@ -1,26 +1,35 @@
 CC=gcc
 CXX=g++
 
-all: ligguf-cpp ligguf-c
+CXXFLAGS=-Wall -Ofast
+CFLAGS=-Wall -Ofast -fopenmp
+LDFLAGS=-lm
+DBGFLAGS=-O0 -g -DDEBUG=1
+
+RELTARGS=ligguf-cpp ligguf-c
+DBGTARGS=ligguf-cpp-debug ligguf-c-debug ligguf-c-profile
+
+all: $(RELTARGS)
 .PHONY: all
 
-debug: ligguf-debug
+debug: $(DBGTARGS)
 .PHONY: debug
 
 clean:
-	rm -f ligguf-cpp ligguf-debug ligguf-c
+	rm -vf $(RELTARGS) $(DBGTARGS)
 .PHONY: clean
-
-CXXFLAGS=-Wall -Ofast
-CFLAGS=-Wall -Wno-unused-variable -O3
-LDFLAGS=-lm
-DBGFLAGS=-O0 -g
 
 ligguf-cpp: cpp/ligguf.cpp
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-ligguf-debug: cpp/ligguf_debug.cpp
+ligguf-cpp-debug: cpp/ligguf_debug.cpp
 	$(CXX) $(CXXFLAGS) $(DBGFLAGS) -o $@ $<
 
 ligguf-c: c/ligguf.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
+
+ligguf-c-debug: c/ligguf.c
+	$(CXX) $(CFLAGS) $(DBGFLAGS) -o $@ $< $(LDFLAGS)
+
+ligguf-c-profile: c/ligguf.c
+	$(CXX) $(CFLAGS) -DDEBUG=1 -o $@ $< $(LDFLAGS)
