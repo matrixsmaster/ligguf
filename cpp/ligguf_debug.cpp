@@ -1,3 +1,9 @@
+/* LiGGUF - a tiny, dependency-free LLaMA inference engine with direct GGUF support
+ * (C) Dmitry 'sciloaf' Solovyev aka MatrixS_Master, 2025
+ *
+ * C++, Debug-enabled version
+ * */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
