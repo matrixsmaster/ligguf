@@ -19,6 +19,7 @@
 #define ALIGNMENT 32
 #define MAXNAMELEN 1024
 #define QK8_0 32
+#define TOP_P 0.9f
 
 #define TOKENS_KEY "tokenizer.ggml.tokens"
 #define TOKENS_SCORE_KEY "tokenizer.ggml.scores"
@@ -42,6 +43,7 @@
 #define MAX(A,B) (((A) > (B))? (A) : (B))
 
 #define MULTITHREAD _Pragma("omp parallel for")
+#define SAMPLER sampler_topp
 
 #define ERR(S,...) fprintf(stderr,S "\n", __VA_ARGS__)
 
@@ -656,7 +658,7 @@ ftensor inference(int tok, int pos)
     return logs;
 }
 
-int sampler(ftensor logits)
+int sampler_greedy(ftensor logits)
 {
     if (!logits) return g_m.tok_eos;
 
@@ -672,6 +674,70 @@ int sampler(ftensor logits)
     return best_id;
 }
 
+int sampler_topp(ftensor logits)
+{
+    float* tp = (float*)malloc(g_m.vocab_size * sizeof(float));
+    int* marks = (int*)malloc(g_m.vocab_size * sizeof(int));
+    memset(marks,0,g_m.vocab_size * sizeof(int));
+
+    int n_maxlog = sampler_greedy(logits);
+    float maxlog = logits[n_maxlog];
+
+    float sum = 0.0f;
+    for (int i = 0; i < g_m.vocab_size; i++) {
+        tp[i] = expf(logits[i] - maxlog);
+        sum += tp[i];
+    }
+    if (sum <= 0.0f) goto topp_fallback;
+
+    for (int i = 0; i < g_m.vocab_size; i++)
+        tp[i] /= sum;
+
+    float cum = 0.0f;
+    int cutoff = 0;
+    while (cum < TOP_P) {
+        int best = -1;
+        float bestval = -1e30;
+
+        for (int i = 0; i < g_m.vocab_size; i++) {
+            if (marks[i]) continue;
+            if (tp[i] > bestval) {
+                bestval = tp[i];
+                best = i;
+            }
+        }
+        if (best < 0) break;
+
+        cum += bestval;
+        marks[best] = ++cutoff;
+    }
+    if (!cutoff) goto topp_fallback;
+
+    float r = ((float)rand() / (float)RAND_MAX) * cum;
+    cum = 0;
+    while (cum < r) {
+        int best = -1;
+        int bestmark = g_m.vocab_size + 1;
+        for (int i = 0; i < g_m.vocab_size; i++) {
+            if (!marks[i]) continue;
+            if (marks[i] < bestmark) {
+                bestmark = marks[i];
+                best = i;
+            }
+        }
+        if (best < 0) break;
+
+        cum += tp[best];
+        marks[best] = 0;
+        n_maxlog = best;
+    }
+
+topp_fallback:
+    free(marks);
+    free(tp);
+    return n_maxlog;
+}
+
 void puttok(int tok)
 {
     if (tok < 0 || tok >= g_m.vocab_size) printf(" <Error token %d> ",tok);
@@ -685,7 +751,7 @@ void generate(int* prompt, int ntokens)
     int tok = 0;
 
     for (int i = 0; i < ntokens; i++) {
-        tok = (*prompt)? *prompt++ : sampler(logits);
+        tok = (*prompt)? *prompt++ : SAMPLER(logits);
         if (logits) free(logits);
         if (!tok || tok == g_m.tok_eos) break;
 
