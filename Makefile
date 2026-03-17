@@ -1,7 +1,7 @@
 CC=gcc
 CXX=g++
 
-CXXFLAGS=-Wall -Ofast
+CXXFLAGS=-Wall -Ofast -fopenmp
 CFLAGS=-Wall -Ofast -fopenmp
 LDFLAGS=-lm
 DBGFLAGS=-O0 -g -DDEBUG=1
@@ -29,7 +29,7 @@ ligguf-c: c/ligguf.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 ligguf-c-debug: c/ligguf.c
-	$(CXX) $(CFLAGS) $(DBGFLAGS) -o $@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(DBGFLAGS) -o $@ $< $(LDFLAGS)
 
 ligguf-c-profile: c/ligguf.c
-	$(CXX) $(CFLAGS) -DDEBUG=1 -o $@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) -DDEBUG=1 -o $@ $< $(LDFLAGS)

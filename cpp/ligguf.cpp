@@ -22,6 +22,7 @@
 #define MAXTENSORS 4000
 #define MAXMETAKV 500
 #define MAXNAMELEN 1024
+#define TOP_P 0.9f
 #define TOKENS_KEY "tokenizer.ggml.tokens"
 #define TOKENS_SCORE_KEY "tokenizer.ggml.scores"
 #define TOKENS_EMBED_KEY "token_embd.weight"
@@ -49,6 +50,9 @@
 #define LAYER_FFN_DOWN_KEY "blk.%d.ffn_down.weight"  // w2
 #define LAYER_FFN_GATE_KEY "blk.%d.ffn_gate.weight"  // w3
 #define QK8_0 32 // From llama.cpp
+
+#define MULTITHREAD _Pragma("omp parallel for")
+#define SAMPLER sampler_topp
 
 #define ERR(S,...) fprintf(stderr,S "\n", __VA_ARGS__)
 
@@ -93,6 +97,18 @@ struct block_q8_0 { // From llama.cpp
 typedef vector<block_q8_0> qtensor;
 typedef vector<float> ftensor;
 
+struct trans_block {
+    float* att_norm;
+    block_q8_0* att_q;
+    block_q8_0* att_k;
+    block_q8_0* att_v;
+    block_q8_0* att_out;
+    float* ffn_norm;
+    block_q8_0* ffn_up;
+    block_q8_0* ffn_down;
+    block_q8_0* ffn_gate;
+};
+
 struct model_state {
     int file; // model file handle
     uint8_t* base; // base mmap address
@@ -111,12 +127,17 @@ struct model_state {
     float rope_base; // RoPE base freq
     int rope_dim; // RoPE dimension (normally should be equal to head_dim, but could be smaller)
     int n_ff; // Feed-Forward length
+    int kv_dim; // Key-Value dimension (per head)
 
     vector<string> tokens; // vector of known tokens (pos == index)
     map<string,int> tokens_rev; // reverse map of tokens (by token string) for convenience
     ftensor tokscores; // token scores (const)
     map<string,gguf_kv> meta_kv; // key-value pairs with model's metadata
     map<string,gguf_tensor> tensors; // map of all tensors in model file
+    block_q8_0* t_embed; // embedding tensor (const)
+    block_q8_0* t_out; // output classifier weights (const)
+    float* t_outnorm; // output classifier RMS norm weights (const)
+    vector<trans_block> tr; // transformer blocks/layers (const)
 
     ftensor x; // activation at current time stamp
     qtensor xq; // quantized x
@@ -130,6 +151,7 @@ struct model_state {
 };
 
 model_state g_m;
+float fp1632_lut[65536];
 
 void close_mmap()
 {
@@ -321,6 +343,46 @@ bool read_gguf()
 
     g_m.head_dim = g_m.n_embed / g_m.n_heads;
     assert(g_m.head_dim * g_m.n_heads == g_m.n_embed);
+    g_m.kv_dim = (g_m.n_embed * g_m.n_kv_heads) / g_m.n_heads;
+
+    g_m.x.resize(g_m.n_embed);
+    g_m.xb.resize(g_m.n_embed);
+    g_m.xb2.resize(g_m.n_embed);
+    g_m.xq.resize(g_m.n_ff);
+    g_m.hb.resize(g_m.n_ff);
+    g_m.hb2.resize(g_m.n_ff);
+    g_m.q.resize(g_m.n_embed);
+    g_m.k.resize(g_m.kv_dim);
+    g_m.v.resize(g_m.kv_dim);
+    g_m.kc.resize((size_t)g_m.n_layers * g_m.n_context * g_m.kv_dim);
+    g_m.vc.resize(g_m.kc.size());
+    g_m.att.resize((size_t)g_m.n_heads * g_m.n_context);
+
+    g_m.tr.resize(g_m.n_layers);
+    memset(g_m.tr.data(),0,g_m.n_layers * sizeof(trans_block));
+
+    for (map<string,gguf_tensor>::const_iterator it = g_m.tensors.begin(); it != g_m.tensors.end(); ++it) {
+        const string& key = it->first;
+        uint8_t* ptr = g_m.tensors_off + it->second.off;
+
+        if (!key.compare(0,4,"blk.") && key.find(".weight") != string::npos) {
+            int id = atoi(key.c_str()+4);
+            assert(id >= 0 && id < g_m.n_layers);
+
+            if (key.find("attn_norm") != string::npos) g_m.tr[id].att_norm = (float*)ptr;
+            else if (key.find("attn_q") != string::npos) g_m.tr[id].att_q = (block_q8_0*)ptr;
+            else if (key.find("attn_k") != string::npos) g_m.tr[id].att_k = (block_q8_0*)ptr;
+            else if (key.find("attn_v") != string::npos) g_m.tr[id].att_v = (block_q8_0*)ptr;
+            else if (key.find("attn_output") != string::npos) g_m.tr[id].att_out = (block_q8_0*)ptr;
+            else if (key.find("ffn_norm") != string::npos) g_m.tr[id].ffn_norm = (float*)ptr;
+            else if (key.find("ffn_up") != string::npos) g_m.tr[id].ffn_up = (block_q8_0*)ptr;
+            else if (key.find("ffn_down") != string::npos) g_m.tr[id].ffn_down = (block_q8_0*)ptr;
+            else if (key.find("ffn_gate") != string::npos) g_m.tr[id].ffn_gate = (block_q8_0*)ptr;
+        }
+        else if (key == TOKENS_EMBED_KEY) g_m.t_embed = (block_q8_0*)ptr;
+        else if (key == OUTPUT_KEY) g_m.t_out = (block_q8_0*)ptr;
+        else if (key == OUTPUT_NORM_KEY) g_m.t_outnorm = (float*)ptr;
+    }
 
     return true;
 }
@@ -469,8 +531,8 @@ void dequant_q80(ftensor &y, block_q8_0* ptr, uint64_t nrow, int len)
 {
     block_q8_0* x = ptr + nrow * (len / QK8_0);
     const int nb = len / QK8_0;
-    y.resize(len);
 
+    MULTITHREAD
     for (int i = 0; i < nb; i++) {
         const float d = fp16_to_fp32(x[i].d);
 
@@ -482,8 +544,8 @@ void dequant_q80(ftensor &y, block_q8_0* ptr, uint64_t nrow, int len)
 void quantize_q80(qtensor &y, const ftensor &x)
 {
     const int nb = x.size() / QK8_0;
-    y.resize((size_t)nb * QK8_0);
 
+    MULTITHREAD
     for (int i = 0; i < nb; i++) {
         float amax = 0.0f; // absolute max
 
@@ -524,18 +586,29 @@ void rmsnorm(ftensor &out, const ftensor &x, const char* weights, int layer)
         out[i] = x[i] * ss * (*p);
 }
 
+void rmsnorm(ftensor &out, const ftensor &x, float* w, int size)
+{
+    float ss = 0.0f;
+    for (int i = 0; i < size; i++) ss += x[i] * x[i];
+
+    ss = ss / (float)size + g_m.rms_epsilon;
+    ss = 1.0f / sqrtf(ss);
+
+    MULTITHREAD
+    for (int i = 0; i < size; i++)
+        out[i] = x[i] * ss * w[i];
+}
+
 void inline matmul(ftensor &out, block_q8_0* qx, block_q8_0* qw, int n, int d)
 {
     const int nb = n / QK8_0;
-    out.resize(d);
 
+    MULTITHREAD
     for (int r = 0; r < d; r++) { // each row
         float acc = 0.0;
 
         for (int b = 0; b < nb; b++) { // each block
             int iw = r * nb + b;
-            const float sx = fp16_to_fp32(qx[b].d);
-            const float sw = fp16_to_fp32(qw[iw].d);
 
             // integer dot
             int32_t s = 0;
@@ -543,7 +616,7 @@ void inline matmul(ftensor &out, block_q8_0* qx, block_q8_0* qw, int n, int d)
                 s += (int32_t)(qx[b].qs[i]) * (int32_t)(qw[iw].qs[i]);
 
             // scale and accumulate result as float
-            acc += sw * sx * (float)s;
+            acc += fp1632_lut[qx[b].d] * fp1632_lut[qw[iw].d] * (float)s;
         }
 
         out[r] = (float)acc;
@@ -572,6 +645,7 @@ void rope(ftensor& x, int n_heads, int pos)
     if (rope_dim > g_m.head_dim) rope_dim = g_m.head_dim;
     if (rope_dim & 1) rope_dim--; // ensure even
 
+    MULTITHREAD
     for (int h = 0; h < n_heads; h++) {
         float* v = x.data() + h * g_m.head_dim;
 
@@ -607,51 +681,41 @@ void softmax(float* x, int size)
         sum += x[i];
     }
     // normalize
+    MULTITHREAD
     for (int i = 0; i < size; i++) x[i] /= sum;
 }
 
 ftensor inference(int tok, int pos)
 {
     ftensor logs;
-    assert(g_m.tensors.count(TOKENS_EMBED_KEY));
-    gguf_tensor const &emb = g_m.tensors.at(TOKENS_EMBED_KEY);
-    assert(emb.dims.size() == 2);
-    assert(emb.type == Q8_0);
-    assert((int)emb.dims[0] == g_m.n_embed);
-    assert((int)emb.dims[1] == g_m.vocab_size);
-
-    const int kv_dim = (g_m.n_embed * g_m.n_kv_heads) / g_m.n_heads;
+    logs.resize(g_m.vocab_size);
 
     // input is the embedding vector for the current token
-    dequant_q80(g_m.x,(block_q8_0*)(g_m.tensors_off+emb.off),tok,g_m.n_embed);
+    dequant_q80(g_m.x,g_m.t_embed,tok,g_m.n_embed);
 
     // for all layers (blocks) of the model
     for (int l = 0; l < g_m.n_layers; l++) {
         // 1. Attention RMS norm
-        rmsnorm(g_m.xb,g_m.x,LAYER_ATT_NORM_KEY,l);
+        rmsnorm(g_m.xb,g_m.x,g_m.tr[l].att_norm,g_m.n_embed);
 
         // 2. QKV over quantized x
         quantize_q80(g_m.xq,g_m.xb);
-        matmul_wrap(g_m.q,g_m.xq.data(),g_m.n_embed,g_m.n_embed,LAYER_ATT_Q_KEY,l);
-        matmul_wrap(g_m.k,g_m.xq.data(),g_m.n_embed,kv_dim,LAYER_ATT_K_KEY,l);
-        matmul_wrap(g_m.v,g_m.xq.data(),g_m.n_embed,kv_dim,LAYER_ATT_V_KEY,l);
+        matmul(g_m.q,g_m.xq.data(),g_m.tr[l].att_q,g_m.n_embed,g_m.n_embed);
+        matmul(g_m.k,g_m.xq.data(),g_m.tr[l].att_k,g_m.n_embed,g_m.kv_dim);
+        matmul(g_m.v,g_m.xq.data(),g_m.tr[l].att_v,g_m.n_embed,g_m.kv_dim);
 
         // 3. RoPE Q & K (float vectors)
         rope(g_m.q,g_m.n_heads,pos);
         rope(g_m.k,g_m.n_kv_heads,pos);
 
         // 4. Simple KV cache
-        size_t loff = l * g_m.n_context * kv_dim; // kv cache layer offset
-        g_m.kc.resize(g_m.n_layers * g_m.n_context * kv_dim);
-        g_m.vc.resize(g_m.kc.size());
-        float* kc_row = g_m.kc.data() + loff + pos * kv_dim;
-        float* vc_row = g_m.vc.data() + loff + pos * kv_dim;
-        memcpy(kc_row,g_m.k.data(),kv_dim*sizeof(float));
-        memcpy(vc_row,g_m.v.data(),kv_dim*sizeof(float));
+        size_t loff = (size_t)l * g_m.n_context * g_m.kv_dim; // kv cache layer offset
+        float* kc_row = g_m.kc.data() + loff + pos * g_m.kv_dim;
+        float* vc_row = g_m.vc.data() + loff + pos * g_m.kv_dim;
+        memcpy(kc_row,g_m.k.data(),g_m.kv_dim*sizeof(float));
+        memcpy(vc_row,g_m.v.data(),g_m.kv_dim*sizeof(float));
 
         // 5. Multi-Head Attention
-        g_m.xb.resize(g_m.n_embed);
-        g_m.att.resize(g_m.n_heads * g_m.n_context);
         const int nrep = g_m.n_heads / g_m.n_kv_heads; // GQA, heads per KV head
         for (int h = 0; h < g_m.n_heads; h++) {
             float* att = g_m.att.data() + (h * g_m.n_context); // attention scores for this head
@@ -660,7 +724,7 @@ ftensor inference(int tok, int pos)
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
-                kc_row = g_m.kc.data() + loff + t * kv_dim + (h / nrep) * g_m.head_dim;
+                kc_row = g_m.kc.data() + loff + t * g_m.kv_dim + (h / nrep) * g_m.head_dim;
 
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
@@ -680,7 +744,7 @@ ftensor inference(int tok, int pos)
             memset(xb,0,g_m.head_dim * sizeof(float));
 
             for (int t = 0; t <= pos; t++) {
-                vc_row = g_m.vc.data() + loff + t * kv_dim + (h / nrep) * g_m.head_dim; // value vector for this head and at this timestep
+                vc_row = g_m.vc.data() + loff + t * g_m.kv_dim + (h / nrep) * g_m.head_dim; // value vector for this head and at this timestep
                 float a = att[t]; // attention weight for this timestep
                 // accumulate the weighted value
                 for (int i = 0; i < g_m.head_dim; i++)
@@ -691,18 +755,18 @@ ftensor inference(int tok, int pos)
 
         // quantize and overwrite the attention result after multiplying with Wattention_output
         quantize_q80(g_m.xq,g_m.xb);
-        matmul_wrap(g_m.xb2,g_m.xq.data(),g_m.n_embed,g_m.n_embed,LAYER_ATT_OUT_KEY,l);
+        matmul(g_m.xb2,g_m.xq.data(),g_m.tr[l].att_out,g_m.n_embed,g_m.n_embed);
 
         // residual connection back to x
         for (int j = 0; j < g_m.n_embed; j++) g_m.x[j] += g_m.xb2[j];
 
         // 6. Feed-Forward Network
-        rmsnorm(g_m.xb,g_m.x,LAYER_FFN_NORM_KEY,l); // FFN RMS norm
+        rmsnorm(g_m.xb,g_m.x,g_m.tr[l].ffn_norm,g_m.n_embed); // FFN RMS norm
 
         // Up / Gate (quantized matmuls)
         quantize_q80(g_m.xq,g_m.xb);
-        matmul_wrap(g_m.hb,g_m.xq.data(),g_m.n_embed,g_m.n_ff,LAYER_FFN_UP_KEY,l); // up
-        matmul_wrap(g_m.hb2,g_m.xq.data(),g_m.n_embed,g_m.n_ff,LAYER_FFN_GATE_KEY,l); // gate
+        matmul(g_m.hb,g_m.xq.data(),g_m.tr[l].ffn_up,g_m.n_embed,g_m.n_ff); // up
+        matmul(g_m.hb2,g_m.xq.data(),g_m.tr[l].ffn_gate,g_m.n_embed,g_m.n_ff); // gate
 
         // Apply SwiGLU: silu(gate) * up
         for (int i = 0; i < g_m.n_ff; i++) {
@@ -713,23 +777,23 @@ ftensor inference(int tok, int pos)
 
         // Down projection (quantize hidden, matmul)
         quantize_q80(g_m.xq,g_m.hb);
-        matmul_wrap(g_m.xb,g_m.xq.data(),g_m.n_ff,g_m.n_embed,LAYER_FFN_DOWN_KEY,l); // w2
+        matmul(g_m.xb,g_m.xq.data(),g_m.tr[l].ffn_down,g_m.n_ff,g_m.n_embed); // w2
 
         // Residual back to x
         for (int j = 0; j < g_m.n_embed; j++) g_m.x[j] += g_m.xb[j];
     }
 
     // final RMS norm
-    rmsnorm(g_m.x,g_m.x,OUTPUT_NORM_KEY,0);
+    rmsnorm(g_m.x,g_m.x,g_m.t_outnorm,g_m.n_embed);
 
     // output into logits
     quantize_q80(g_m.xq,g_m.x);
-    matmul_wrap(logs,g_m.xq.data(),g_m.n_embed,g_m.vocab_size,OUTPUT_KEY,0);
+    matmul(logs,g_m.xq.data(),g_m.t_out,g_m.n_embed,g_m.vocab_size);
 
     return logs;
 }
 
-int sampler(const ftensor &logits)
+int sampler_greedy(const ftensor &logits)
 {
     if (logits.empty()) return g_m.tok_eos;
 
@@ -743,6 +807,66 @@ int sampler(const ftensor &logits)
     }
 
     return best_id;
+}
+
+int sampler_topp(const ftensor &logits)
+{
+    ftensor tp(g_m.vocab_size);
+    vector<int> marks(g_m.vocab_size,0);
+
+    int n_maxlog = sampler_greedy(logits);
+    float maxlog = logits[n_maxlog];
+
+    float sum = 0.0f;
+    for (int i = 0; i < g_m.vocab_size; i++) {
+        tp[i] = expf(logits[i] - maxlog);
+        sum += tp[i];
+    }
+    if (sum <= 0.0f) return n_maxlog;
+
+    for (int i = 0; i < g_m.vocab_size; i++)
+        tp[i] /= sum;
+
+    float cum = 0.0f;
+    int cutoff = 0;
+    while (cum < TOP_P) {
+        int best = -1;
+        float bestval = -1e30f;
+
+        for (int i = 0; i < g_m.vocab_size; i++) {
+            if (marks[i]) continue;
+            if (tp[i] > bestval) {
+                bestval = tp[i];
+                best = i;
+            }
+        }
+        if (best < 0) break;
+
+        cum += bestval;
+        marks[best] = ++cutoff;
+    }
+    if (!cutoff) return n_maxlog;
+
+    float r = ((float)rand() / (float)RAND_MAX) * cum;
+    cum = 0.0f;
+    while (cum < r) {
+        int best = -1;
+        int bestmark = g_m.vocab_size + 1;
+        for (int i = 0; i < g_m.vocab_size; i++) {
+            if (!marks[i]) continue;
+            if (marks[i] < bestmark) {
+                bestmark = marks[i];
+                best = i;
+            }
+        }
+        if (best < 0) break;
+
+        cum += tp[best];
+        marks[best] = 0;
+        n_maxlog = best;
+    }
+
+    return n_maxlog;
 }
 
 void puttok(int tok)
@@ -761,7 +885,7 @@ void generate(vector<int> prompt, int ntokens)
         if (i < (int)prompt.size())
             tok = prompt.at(i);
         else
-            tok = sampler(logits);
+            tok = SAMPLER(logits);
 
         if (!tok || tok == g_m.tok_eos) break;
 
@@ -790,6 +914,8 @@ int main(int argc, char* argv[])
     assert(open_mmap(argv[1]));
     assert(read_gguf());
     assert(read_tokenizer());
+
+    for (int i = 0; i < 65536; i++) fp1632_lut[i] = fp16_to_fp32((uint16_t)i);
 
     int ngen = atoi(argv[2]);
     vector<int> toks;
