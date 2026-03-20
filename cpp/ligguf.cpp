@@ -1,5 +1,5 @@
 /* LiGGUF - a tiny, dependency-free LLaMA inference engine with direct GGUF support
- * (C) Dmitry 'sciloaf' Solovyev aka MatrixS_Master, 2025
+ * (C) Dmitry 'sciloaf' Solovyev aka MatrixS_Master, 2025-2026
  *
  * C++ version
  * */
@@ -564,28 +564,6 @@ void quantize_q80(qtensor &y, const ftensor &x)
     }
 }
 
-void rmsnorm(ftensor &out, const ftensor &x, const char* weights, int layer)
-{
-    char str[MAXNAMELEN] = {0};
-    snprintf(str,sizeof(str),weights,layer);
-    assert(g_m.tensors.count(str));
-
-    const gguf_tensor &tz = g_m.tensors.at(str);
-    assert(tz.dims[0] == x.size());
-
-    float ss = 0.0f;
-    for (int i = 0; i < (int)x.size(); i++)
-        ss += x[i] * x[i];
-
-    ss = ss / (float)x.size() + g_m.rms_epsilon;
-    ss = 1.0f / sqrtf(ss);
-
-    out.resize(x.size());
-    float* p = (float*)(g_m.tensors_off + tz.off);
-    for (int i = 0; i < (int)x.size(); i++,p++)
-        out[i] = x[i] * ss * (*p);
-}
-
 void rmsnorm(ftensor &out, const ftensor &x, float* w, int size)
 {
     float ss = 0.0f;
@@ -621,21 +599,6 @@ void inline matmul(ftensor &out, block_q8_0* qx, block_q8_0* qw, int n, int d)
 
         out[r] = (float)acc;
     }
-}
-
-void matmul_wrap(ftensor &out, block_q8_0* qx, int n, int d, const char* weights, int layer)
-{
-    char str[MAXNAMELEN] = {0};
-    snprintf(str,sizeof(str),weights,layer);
-    assert(g_m.tensors.count(str));
-
-    const gguf_tensor &tz = g_m.tensors.at(str);
-    assert(tz.type == Q8_0);
-    assert(tz.dims.size() == 2);
-    assert((int)tz.dims[0] == n);
-    assert((int)tz.dims[1] == d);
-
-    matmul(out,qx,(block_q8_0*)(g_m.tensors_off+tz.off),n,d);
 }
 
 void rope(ftensor& x, int n_heads, int pos)

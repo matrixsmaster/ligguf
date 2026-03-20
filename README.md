@@ -1,6 +1,6 @@
 # Ligguf
 
-**Ligguf** is (probably) the first **tiny, dependency-free LLaMA inference engine** with **direct GGUF support** —
+**Ligguf** is (probably) the first **tiny, dependency-free LLaMA inference engine** with **direct GGUF support** -
 no conversions, no helper scripts, no Python detours.
 
 It's also unique in that it exists in two flavors simultaneously - in pure C, and in C++ versions.
@@ -18,7 +18,7 @@ However, if you want an easy-to-read code, start with C++ version anyway ;)
 ## What it is
 
 Ligguf is a fully self-contained program that loads and runs quantized LLaMA-family **GGUF** models *directly from disk*.
-It is a stand-alone, minimal, end-to-end implementation — the whole model pipeline in under 800 (C++ version) or 720 (C version) lines.
+It is a stand-alone, minimal, end-to-end implementation - the whole model pipeline in under 800 (C++ version) or 720 (C version) lines.
 
 Now available in **two flavors**:
 
@@ -31,9 +31,9 @@ Now available in **two flavors**:
 
 - **Tiny:** under **800** (C++ version) or **700** (C version) lines, including comments.
 - **No dependencies:** standard library only.
-- **Direct GGUF parsing:** opens `.gguf` files directly via mmap — no conversions, no preprocessing.
+- **Direct GGUF parsing:** opens `.gguf` files directly via mmap - no conversions, no preprocessing.
 - **Quantized:** supports **Q8_0** out of the box (same layout as llama.cpp).
-- **Readable:** every step is spelled out — no templates, no macros, no mysterious helpers.
+- **Readable:** every step is spelled out.
 - **Functional:** runs full transformer inference with attention, RMSNorm, RoPE, SwiGLU, and greedy sampling.
 - **Educational:** an ideal codebase to learn *how* a transformer actually runs, byte by byte.
 
@@ -119,7 +119,7 @@ Everything else is left as an exercise for the inspired.
 
 ## Philosophy
 
-> “Simplicity isn’t lack of complexity — it’s control over it.”
+> “Simplicity isn’t lack of complexity - it’s control over it.”
 
 Ligguf exists to be read, understood, and tinkered with.
 It’s the codebase you can open in a text editor (or print on a single A4 sheet), read through, and actually *get it*.
@@ -129,7 +129,7 @@ Every number has a reason. Every line has a purpose.
 
 ## Credits
 
-Created by **Dmitry 'sciloaf' Solovyev** aka **MatrixS_Master**, in 2025, for fun!
+Created by **Dmitry 'sciloaf' Solovyev** aka **MatrixS_Master**, in 2025, 2026, for fun!
 
 Thanks to **llama.cpp** and **llama2.c** projects for inspiration (and data types).
 
