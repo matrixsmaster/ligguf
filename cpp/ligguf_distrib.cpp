@@ -584,7 +584,7 @@ void inline matmul(ftensor &out, block_q8_0* qx, block_q8_0* qw, int n, int d)
     }
 }
 
-void matmul_partial_cols(ftensor &out, block_q8_0* qx, block_q8_0* qw, int n, int d, int col0, int coln)
+void inline matmul_partial_cols(ftensor &out, block_q8_0* qx, block_q8_0* qw, int n, int d, int col0, int coln)
 {
     const int nb = n / QK8_0;
     const int b0 = col0 / QK8_0;
@@ -766,7 +766,7 @@ void ffn_partial(int l, block_q8_0* xq, ftensor &out)
     matmul_partial_cols(out,g_m.net_xq.data(),g_m.tr[l].ffn_down,g_m.n_ff,g_m.n_embed,sd.ff0,sd.ff0+sd.ffn);
 }
 
-bool write_full(int fd, const void* buf, size_t len)
+bool inline write_full(int fd, const void* buf, size_t len)
 {
     const uint8_t* p = (const uint8_t*)buf;
     while (len) {
@@ -783,7 +783,7 @@ bool write_full(int fd, const void* buf, size_t len)
     return true;
 }
 
-bool read_full(int fd, void* buf, size_t len)
+bool inline read_full(int fd, void* buf, size_t len)
 {
     uint8_t* p = (uint8_t*)buf;
     while (len) {
@@ -874,7 +874,7 @@ int listen_port(int port)
     return fd;
 }
 
-bool send_hdr(int fd, uint32_t kind, int a, int b, int c)
+bool inline send_hdr(int fd, uint32_t kind, int a, int b, int c)
 {
     net_hdr h;
     h.kind = kind;
@@ -884,18 +884,18 @@ bool send_hdr(int fd, uint32_t kind, int a, int b, int c)
     return write_full(fd,&h,sizeof(h));
 }
 
-bool recv_hdr(int fd, net_hdr &h)
+bool inline recv_hdr(int fd, net_hdr &h)
 {
     return read_full(fd,&h,sizeof(h));
 }
 
-bool send_partial(int fd, const ftensor &partial)
+bool inline send_partial(int fd, const ftensor &partial)
 {
     quantize_q80(g_m.partial_q,partial);
     return write_full(fd,g_m.partial_q.data(),(g_m.n_embed / QK8_0) * sizeof(block_q8_0));
 }
 
-bool recv_partial(int fd, ftensor &partial)
+bool inline recv_partial(int fd, ftensor &partial)
 {
     if (!read_full(fd,g_m.recv_partial_q.data(),(g_m.n_embed / QK8_0) * sizeof(block_q8_0))) return false;
     dequant_q80(partial,g_m.recv_partial_q.data(),0,g_m.n_embed);
@@ -1039,6 +1039,7 @@ bool distributed_reduce(uint32_t kind, int layer, int pos, const ftensor &normed
 
     for (int i = 0; i < (int)g_m.peers.size(); i++) {
         DBG("master recv kind=%u layer=%d pos=%d fd=%d",kind,layer,pos,g_m.peers[i].fd);
+        //TODO: for 2+ nodes, don't wait sequentially, allow for random returns
         if (!recv_partial(g_m.peers[i].fd,g_m.recv_partial)) return false;
         for (int i = 0; i < g_m.n_embed; i++) g_m.partial[i] += g_m.recv_partial[i];
     }
