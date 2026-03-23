@@ -6,7 +6,7 @@ CFLAGS=-Wall -Ofast -fopenmp
 LDFLAGS=-lm
 DBGFLAGS=-O0 -g -DDEBUG=1
 
-RELTARGS=ligguf-cpp ligguf-c
+RELTARGS=ligguf-cpp ligguf-distrib ligguf-c
 DBGTARGS=ligguf-cpp-debug ligguf-c-debug ligguf-c-profile
 
 all: $(RELTARGS)
@@ -24,6 +24,9 @@ ligguf-cpp: cpp/ligguf.cpp
 
 ligguf-cpp-debug: cpp/ligguf_debug.cpp
 	$(CXX) $(CXXFLAGS) $(DBGFLAGS) -o $@ $<
+
+ligguf-distrib: cpp/ligguf_distrib.cpp
+	$(CXX) $(CXXFLAGS) -o $@ $<
 
 ligguf-c: c/ligguf.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
