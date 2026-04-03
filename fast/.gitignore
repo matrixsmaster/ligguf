@@ -1,0 +1,4 @@
+*.o
+*.bin
+*.log
+ligguf_fast_qk
