@@ -38,8 +38,13 @@ ifeq ($(DEBUG),1)
 	LDFLAGS = $(DBGLDFLAGS)
 endif
 
+SDLFLAGS = $(shell sdl2-config --cflags 2>/dev/null)
+ifeq ($(SDLFLAGS),)
+	NO_SDL = 1
+endif
+
 ifneq ($(NO_SDL),1)
-	CXXFLAGS += -DUSE_SDL=1 $(shell sdl2-config --cflags 2>/dev/null)
+	CXXFLAGS += -DUSE_SDL=1 $(SDLFLAGS)
 	SDL_LIBS += $(shell sdl2-config --libs 2>/dev/null)
 	OBJS += viz_sdl.o
 endif
