@@ -260,6 +260,15 @@ void read_gguf()
     uint64_t off = p - g_m.base;
     g_m.tensors_off = g_m.base + (off + (ALIGNMENT - (off % ALIGNMENT)) % ALIGNMENT);
 
+    if (g_m.n_heads <= 0) {
+        fprintf(stderr, "invalid GGUF: llama.attention.head_count must be > 0\n");
+        return;
+    }
+    if (g_m.n_kv_heads <= 0) {
+        fprintf(stderr, "invalid GGUF: llama.attention.head_count_kv must be > 0\n");
+        return;
+    }
+
     g_m.head_dim = g_m.n_embed / g_m.n_heads;
     assert(g_m.head_dim * g_m.n_heads == g_m.n_embed);
     g_m.kv_dim = (g_m.n_embed * g_m.n_kv_heads) / g_m.n_heads;
